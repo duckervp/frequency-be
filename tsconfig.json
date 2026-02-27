@@ -4,7 +4,7 @@
         "module": "ESNext",
         "moduleResolution": "bundler",
         "outDir": "./dist",
-        "rootDir": "./src",
+        "rootDir": "./api",
         "types": [
             "node"
         ],
@@ -13,6 +13,6 @@
         "esModuleInterop": true
     },
     "include": [
-        "src/**/*.ts"
+        "api/**/*.ts"
     ]
 }

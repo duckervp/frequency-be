@@ -1,8 +1,8 @@
 import { defineConfig } from 'drizzle-kit';
 
 export default defineConfig({
-    schema: './src/db/schema.ts',
-    out: './src/db/migrations',
+    schema: './api/db/schema.ts',
+    out: './api/db/migrations',
     dialect: 'turso',
     dbCredentials: {
         url: process.env.TURSO_URL!,
