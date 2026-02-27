@@ -1,1 +1,15 @@
-{"root":["./api/index.ts","./api/server.ts","./api/db/schema.ts","./api/lib/db.ts","./api/lib/id.ts","./api/lib/jwt.ts","./api/middleware/auth.ts","./api/routes/actions.ts","./api/routes/auth.ts","./api/routes/logs.ts"],"version":"5.9.3"}
+{
+    "root": [
+        "./src/index.ts",
+        "./src/server.ts",
+        "./src/db/schema.ts",
+        "./src/lib/db.ts",
+        "./src/lib/id.ts",
+        "./src/lib/jwt.ts",
+        "./src/middleware/auth.ts",
+        "./src/routes/actions.ts",
+        "./src/routes/auth.ts",
+        "./src/routes/logs.ts"
+    ],
+    "version": "5.9.3"
+}

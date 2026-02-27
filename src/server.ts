@@ -1,4 +1,4 @@
-import { app } from './index.js';
+import app from './index.js';
 import { serve } from '@hono/node-server';
 
 const port = Number(process.env.PORT ?? 3001);
