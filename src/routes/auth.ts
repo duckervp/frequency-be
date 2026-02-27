@@ -177,4 +177,26 @@ authRoutes.get('/google/callback', async (c) => {
 });
 
 // ── GET /api/auth/me ─────────────────────────────────────────────────────────
-// (lightweight — import authMiddleware where needed)
+import { authMiddleware } from '../middleware/auth.js';
+
+authRoutes.get('/me', authMiddleware, async (c) => {
+    const userId = c.get('userId');
+    const user = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, userId))
+        .get();
+
+    if (!user) {
+        return c.json({ error: 'User not found' }, 404);
+    }
+
+    return c.json({
+        user: {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            avatarUrl: user.avatarUrl,
+        },
+    });
+});
