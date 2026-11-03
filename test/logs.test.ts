@@ -129,3 +129,35 @@ describe('local-day filters (UTC+7 user)', () => {
         expect((await api('GET', '/logs?from=2026-11-03 00:00&to=2026-11-04T00:00:00Z', { token })).status).toBe(400);
     });
 });
+
+describe('list order', () => {
+    it('regression: lists are sorted newest loggedAt first, not by insertion order', async () => {
+        const { token, action } = await userWithAction();
+        const now = Date.now();
+        const at = (h: number) => new Date(now - h * 3600e3).toISOString();
+        // Insert out of order, as happens when a log is backdated in the time picker
+        for (const h of [1, 5, 3]) {
+            await api('POST', '/logs', { token, body: { actionId: action.id, loggedAt: at(h) } });
+        }
+        const expected = [at(1), at(3), at(5)];
+        const range = `from=${encodeURIComponent(new Date(now - 6 * 3600e3).toISOString())}&to=${encodeURIComponent(new Date(now + 1).toISOString())}`;
+
+        for (const query of ['', '?last24h=true', `?${range}`]) {
+            const res = await api('GET', `/logs${query}`, { token });
+            expect(res.body.map((r: any) => r.log.loggedAt), `GET /logs${query}`).toEqual(expected);
+        }
+    });
+
+    it('regression: legacy ?date= (UTC day) is sorted newest first too', async () => {
+        const { token, action } = await userWithAction();
+        for (const t of ['10', '05', '08']) {
+            await api('POST', '/logs', { token, body: { actionId: action.id, loggedAt: `2026-01-20T${t}:00:00.000Z` } });
+        }
+        const res = await api('GET', '/logs?date=2026-01-20', { token });
+        expect(res.body.map((r: any) => r.log.loggedAt)).toEqual([
+            '2026-01-20T10:00:00.000Z',
+            '2026-01-20T08:00:00.000Z',
+            '2026-01-20T05:00:00.000Z',
+        ]);
+    });
+});

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { eq, and, gte, lt, sql } from 'drizzle-orm';
+import { eq, and, gte, lt, sql, desc } from 'drizzle-orm';
 import { db } from '../lib/db.js';
 import { actionLogs, actions } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -28,12 +28,15 @@ function parseRange(from?: string, to?: string): { from: string; to: string } | 
 
 const INVALID_RANGE = { error: 'from and to must both be valid ISO dates, with from < to' };
 
+// Newest first; createdAt breaks ties between logs with the same loggedAt
+const NEWEST_FIRST = [desc(actionLogs.loggedAt), desc(actionLogs.createdAt)];
+
 // ── GET /api/logs ─────────────────────────────────────────────────────────────
 // Query params:
 //   ?from=ISO&to=ISO  → logs with from <= loggedAt < to (clients send their local day's bounds)
 //   ?date=YYYY-MM-DD  → logs for that calendar day (UTC) — legacy, kept for older clients
 //   ?last24h=true     → logs in the last 24 hours
-// Returns log rows joined with action metadata.
+// Returns log rows joined with action metadata, newest loggedAt first.
 logRoutes.get('/', async (c) => {
     const userId = c.get('userId');
     const date = c.req.query('date');
@@ -55,6 +58,7 @@ logRoutes.get('/', async (c) => {
                     lt(actionLogs.loggedAt, range.to)
                 )
             )
+            .orderBy(...NEWEST_FIRST)
             .all();
     } else if (date) {
         // e.g. date=2025-10-14  → filter loggedAt LIKE '2025-10-14%'
@@ -71,6 +75,7 @@ logRoutes.get('/', async (c) => {
                     sql`${actionLogs.loggedAt} LIKE ${date + '%'}`
                 )
             )
+            .orderBy(...NEWEST_FIRST)
             .all();
     } else if (last24h) {
         const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -79,6 +84,7 @@ logRoutes.get('/', async (c) => {
             .from(actionLogs)
             .leftJoin(actions, eq(actionLogs.actionId, actions.id))
             .where(and(eq(actionLogs.userId, userId), gte(actionLogs.loggedAt, since)))
+            .orderBy(...NEWEST_FIRST)
             .all();
     } else {
         rows = await db
@@ -86,6 +92,7 @@ logRoutes.get('/', async (c) => {
             .from(actionLogs)
             .leftJoin(actions, eq(actionLogs.actionId, actions.id))
             .where(eq(actionLogs.userId, userId))
+            .orderBy(...NEWEST_FIRST)
             .all();
     }
 
