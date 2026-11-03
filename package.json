@@ -9,7 +9,11 @@
         "start": "node dist/server.js",
         "db:generate": "drizzle-kit generate",
         "db:push": "drizzle-kit push",
-        "db:migrate": "drizzle-kit migrate"
+        "db:migrate": "drizzle-kit migrate",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:db:reset": "node --env-file=.env.test --import tsx/esm test/reset-db.ts",
+        "test:server": "npm run test:db:reset && node --env-file=.env.test --import ./test/test-env.mjs --import tsx/esm src/server.ts"
     },
     "dependencies": {
         "@hono/node-server": "^1.19.9",
@@ -25,6 +29,7 @@
         "@types/node": "^24.10.1",
         "drizzle-kit": "^0.31.9",
         "tsx": "^4.21.0",
-        "typescript": "^5.9.3"
+        "typescript": "^5.9.3",
+        "vitest": "^3.2.7"
     }
 }

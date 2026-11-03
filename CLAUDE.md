@@ -5,8 +5,17 @@ Hono REST API for Frequency, Drizzle ORM on Turso (libsql). Deployed to Vercel. 
 ## Commands
 
 - Dev: `npm run dev` — runs `src/server.ts` with `--watch`, loads `.env`, listens on `PORT` (default 3001)
-- Verify: `npx tsc --noEmit -p .` — must pass before any commit (there are no tests yet)
+- Verify: `npx tsc --noEmit -p .` and `npm test` — both must pass before any commit
 - Smoke test: `curl http://localhost:3001/api/health` → `{"ok":true}`
+
+## Tests
+
+- `npm test` — Vitest API tests in `test/*.test.ts`. They call the Hono app in-process (`test/helpers.ts` → `api()`, `newUser()`), against a fresh SQLite file `test/.tmp/vitest.db`.
+- `npm run test:server` — resets `test/.tmp/e2e.db` and starts the BE on **:3101** for the web app's Playwright e2e. Config comes from `.env.test` (committed, no secrets).
+- Test DB safety: `test/test-env.mjs` and `test/reset-db.ts` refuse any `TURSO_URL` that is not `file:` — tests can never reach Turso. Keep those guards.
+- `src/lib/db.ts` uses `@libsql/client/web` (cannot open `file:`). Tests redirect it to `@libsql/client` via the Vitest alias / `test-env.mjs` loader hook — do not change the production import for tests.
+- Schema for test DBs is generated from `src/db/schema.ts` via `drizzle-kit export`, so schema changes apply to tests automatically.
+- Every bug fix gets a test that fails before the fix and passes after it.
 
 ## Layout
 
