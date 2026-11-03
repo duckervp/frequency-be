@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import app from '../src/index.js';
 import { api, newUser } from './helpers.js';
+import { db } from '../src/lib/db.js';
+import { actionLogs } from '../src/db/schema.js';
 
 async function raw(method: string, path: string, body: string, token?: string) {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -92,5 +94,21 @@ describe('log input', () => {
 
         const list = await api('GET', '/logs', { token: me.token });
         expect(JSON.stringify(list.body)).not.toContain('Secret habit');
+    });
+});
+
+describe('log/action join', () => {
+    it("regression: an existing log that points at another user's action shows no action", async () => {
+        const me = await newUser();
+        const other = await newUser();
+        const { body: theirs } = await api('POST', '/actions', { token: other.token, body: { name: 'Secret habit' } });
+        // Written before POST checked ownership
+        const id = `legacy-${Date.now()}`;
+        await db.insert(actionLogs).values({ id, userId: me.userId, actionId: theirs.id, loggedAt: new Date().toISOString() });
+
+        const one = await api('GET', `/logs/${id}`, { token: me.token });
+        expect(one.body.action).toBeNull();
+        const list = await api('GET', '/logs', { token: me.token });
+        expect(list.body.find((r: { log: { id: string } }) => r.log.id === id).action).toBeNull();
     });
 });

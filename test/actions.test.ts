@@ -48,4 +48,17 @@ describe('actions', () => {
         const still = await api('GET', '/actions', { token: alice.token });
         expect(still.body[0]).toMatchObject({ id: action.id, name: 'Secret' });
     });
+
+    it("gets one action by id, and 404 for another user's or a missing one", async () => {
+        const me = await newUser();
+        const other = await newUser();
+        const { body: mine } = await api('POST', '/actions', { token: me.token, body: { name: 'Mine' } });
+        const { body: theirs } = await api('POST', '/actions', { token: other.token, body: { name: 'Theirs' } });
+
+        const res = await api('GET', `/actions/${mine.id}`, { token: me.token });
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({ id: mine.id, name: 'Mine' });
+        expect((await api('GET', `/actions/${theirs.id}`, { token: me.token })).status).toBe(404);
+        expect((await api('GET', '/actions/missing', { token: me.token })).status).toBe(404);
+    });
 });

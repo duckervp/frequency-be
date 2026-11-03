@@ -33,6 +33,18 @@ actionRoutes.get('/', async (c) => {
     return c.json(rows);
 });
 
+// ── GET /api/actions/:id ─────────────────────────────────────────────────────
+actionRoutes.get('/:id', async (c) => {
+    const userId = c.get('userId');
+    const row = await db
+        .select()
+        .from(actions)
+        .where(and(eq(actions.id, c.req.param('id')), eq(actions.userId, userId)))
+        .get();
+    if (!row) return c.json({ error: 'Not found' }, 404);
+    return c.json(row);
+});
+
 // ── POST /api/actions ────────────────────────────────────────────────────────
 actionRoutes.post('/', async (c) => {
     const userId = c.get('userId');
