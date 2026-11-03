@@ -124,6 +124,70 @@ logRoutes.get('/stats', async (c) => {
     });
 });
 
+// ── GET /api/logs/streak ──────────────────────────────────────────────────────
+// Query params:
+//   ?tz=IANA zone (required, e.g. Asia/Ho_Chi_Minh) -> days are the user's local calendar days
+//   ?actionId=    -> only logs of that action
+//   ?today=YYYY-MM-DD -> the client's local today (so it matches the calendar it shows); defaults to today in tz
+// Returns { streak }: consecutive local days with a log, counting back from today (0 if nothing today).
+// Computed here so clients never download the log history just to count days.
+logRoutes.get('/streak', async (c) => {
+    const userId = c.get('userId');
+    const tz = c.req.query('tz');
+    const actionId = c.req.query('actionId');
+    const today = c.req.query('today');
+    if (today !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+        return c.json({ error: 'today must be YYYY-MM-DD' }, 400);
+    }
+
+    let toDay: Intl.DateTimeFormat;
+    try {
+        if (!tz) throw new RangeError('missing tz');
+        toDay = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    } catch {
+        return c.json({ error: 'tz must be a valid IANA timezone, e.g. Asia/Ho_Chi_Minh' }, 400);
+    }
+
+    let expected = today ?? toDay.format(new Date());
+    let streak = 0;
+    let before: string | undefined;
+    // Newest first in batches (index on user_id, logged_at), so a short streak reads only a few rows
+    scan: while (true) {
+        const rows = await db
+            .select({ loggedAt: actionLogs.loggedAt })
+            .from(actionLogs)
+            .where(and(
+                eq(actionLogs.userId, userId),
+                actionId ? eq(actionLogs.actionId, actionId) : undefined,
+                before ? lt(actionLogs.loggedAt, before) : undefined,
+            ))
+            .orderBy(desc(actionLogs.loggedAt))
+            .limit(STREAK_BATCH)
+            .all();
+
+        for (const { loggedAt } of rows) {
+            const at = new Date(loggedAt);
+            if (isNaN(at.getTime())) continue; // POST/PUT do not validate the format yet
+            const day = toDay.format(at);
+            if (day > expected) continue; // later today already counted, or a future log
+            if (day !== expected) break scan;
+            streak++;
+            expected = previousDay(expected);
+        }
+        if (rows.length < STREAK_BATCH) break;
+        before = rows[rows.length - 1].loggedAt;
+    }
+    return c.json({ streak });
+});
+
+const STREAK_BATCH = 500;
+
+/** 'YYYY-MM-DD' of the calendar day before (pure date math, no timezone involved) */
+function previousDay(day: string): string {
+    const [y, m, d] = day.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+}
+
 // ── GET /api/logs/:id ─────────────────────────────────────────────────────────
 logRoutes.get('/:id', async (c) => {
     const userId = c.get('userId');

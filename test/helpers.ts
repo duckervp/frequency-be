@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import app from '../src/index.js';
 
 let counter = 0;
@@ -21,7 +22,8 @@ export async function api<T = any>(
 
 /** Registers a fresh user with a unique email and returns its token. */
 export async function newUser(name = 'Test User') {
-    const email = `user${Date.now()}-${++counter}@test.local`;
+    // Not Date.now() alone: tests with fake timers would get the same email across files
+    const email = `user${randomUUID()}-${++counter}@test.local`;
     const password = 'password123';
     const res = await api<{ token: string; user: { id: string } }>('POST', '/auth/register', {
         body: { email, password, name },
