@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { api, newUser } from './helpers.js';
 
 async function userWithAction() {
@@ -74,5 +74,58 @@ describe('logs', () => {
         expect((await api('GET', `/logs/${id}`, { token: bob.token })).status).toBe(404);
         expect((await api('PUT', `/logs/${id}`, { token: bob.token, body: { note: 'x' } })).status).toBe(404);
         expect((await api('DELETE', `/logs/${id}`, { token: bob.token })).status).toBe(404);
+    });
+});
+
+describe('local-day filters (UTC+7 user)', () => {
+    const NOV_3_UTC7 = 'from=2026-11-03T00:00:00%2B07:00&to=2026-11-04T00:00:00%2B07:00';
+
+    it('regression: ?from&to returns logs from the local day, not the UTC day', async () => {
+        const { token, action } = await userWithAction();
+        // Nov 3, 06:00 in Asia/Ho_Chi_Minh — still Nov 2 in UTC
+        await api('POST', '/logs', { token, body: { actionId: action.id, loggedAt: '2026-11-02T23:00:00.000Z' } });
+
+        // Nov 2 12:00 local, and Nov 4 00:00 local (the exclusive end of Nov 3)
+        await api('POST', '/logs', { token, body: { actionId: action.id, loggedAt: '2026-11-02T05:00:00.000Z' } });
+        await api('POST', '/logs', { token, body: { actionId: action.id, loggedAt: '2026-11-03T17:00:00.000Z' } });
+
+        // What a UTC+7 client sends for Nov 3: local midnight to next local midnight
+        const day = await api('GET', `/logs?${NOV_3_UTC7}`, { token });
+        expect(day.body.map((r: any) => r.log.loggedAt)).toEqual(['2026-11-02T23:00:00.000Z']);
+    });
+
+    it("regression: /stats counts today's logs by the local day, not the UTC day", async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            vi.setSystemTime(new Date('2026-11-03T03:00:00.000Z')); // Nov 3, 10:00 local
+            const { token, action } = await userWithAction();
+            await api('POST', '/logs', { token, body: { actionId: action.id, loggedAt: '2026-11-02T23:00:00.000Z' } });
+
+            const stats = await api('GET', `/logs/stats?${NOV_3_UTC7}`, { token });
+            expect(stats.body.totalToday).toBe(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("includes a log exactly at from, and only the current user's logs", async () => {
+        const alice = await userWithAction();
+        const bob = await userWithAction();
+        await api('POST', '/logs', { token: alice.token, body: { actionId: alice.action.id, loggedAt: '2026-11-02T17:00:00.000Z' } });
+        await api('POST', '/logs', { token: bob.token, body: { actionId: bob.action.id, loggedAt: '2026-11-02T18:00:00.000Z' } });
+
+        const day = await api('GET', `/logs?${NOV_3_UTC7}`, { token: alice.token });
+        expect(day.body.map((r: any) => r.log.loggedAt)).toEqual(['2026-11-02T17:00:00.000Z']);
+    });
+
+    it('rejects a half or invalid range', async () => {
+        const { token } = await newUser();
+        expect((await api('GET', '/logs?from=2026-11-03T00:00:00Z', { token })).status).toBe(400);
+        expect((await api('GET', '/logs?from=nope&to=2026-11-04T00:00:00Z', { token })).status).toBe(400);
+        expect((await api('GET', '/logs?from=2026-11-04T00:00:00Z&to=2026-11-03T00:00:00Z', { token })).status).toBe(400);
+        expect((await api('GET', '/logs/stats?to=2026-11-04T00:00:00Z', { token })).status).toBe(400);
+        // Parseable by Date but not an ISO instant with an offset
+        expect((await api('GET', '/logs?from=1&to=2026-11-04T00:00:00Z', { token })).status).toBe(400);
+        expect((await api('GET', '/logs?from=2026-11-03 00:00&to=2026-11-04T00:00:00Z', { token })).status).toBe(400);
     });
 });

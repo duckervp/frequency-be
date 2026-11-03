@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { eq, and, gte, sql } from 'drizzle-orm';
+import { eq, and, gte, lt, sql } from 'drizzle-orm';
 import { db } from '../lib/db.js';
 import { actionLogs, actions } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -9,19 +9,54 @@ export const logRoutes = new Hono();
 
 logRoutes.use('*', authMiddleware);
 
+/**
+ * Parses ?from=&to= (ISO instants, e.g. a local day's midnight-to-midnight computed by the client)
+ * into normalized UTC ISO strings comparable with stored loggedAt values.
+ * Returns null when neither is given, 'invalid' when either is missing, not ISO with Z/offset, or from >= to.
+ * Note: a raw '+' in an offset is decoded as a space — clients must URL-encode it (or send Z).
+ */
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
+function parseRange(from?: string, to?: string): { from: string; to: string } | null | 'invalid' {
+    if (from === undefined && to === undefined) return null;
+    if (!from || !to || !ISO_INSTANT.test(from) || !ISO_INSTANT.test(to)) return 'invalid';
+    const f = new Date(from);
+    const t = new Date(to);
+    if (isNaN(f.getTime()) || isNaN(t.getTime()) || f >= t) return 'invalid';
+    return { from: f.toISOString(), to: t.toISOString() };
+}
+
+const INVALID_RANGE = { error: 'from and to must both be valid ISO dates, with from < to' };
+
 // ── GET /api/logs ─────────────────────────────────────────────────────────────
 // Query params:
-//   ?date=YYYY-MM-DD  → logs for that calendar day (UTC)
+//   ?from=ISO&to=ISO  → logs with from <= loggedAt < to (clients send their local day's bounds)
+//   ?date=YYYY-MM-DD  → logs for that calendar day (UTC) — legacy, kept for older clients
 //   ?last24h=true     → logs in the last 24 hours
 // Returns log rows joined with action metadata.
 logRoutes.get('/', async (c) => {
     const userId = c.get('userId');
     const date = c.req.query('date');
     const last24h = c.req.query('last24h') === 'true';
+    const range = parseRange(c.req.query('from'), c.req.query('to'));
+    if (range === 'invalid') return c.json(INVALID_RANGE, 400);
 
     let rows;
 
-    if (date) {
+    if (range) {
+        rows = await db
+            .select({ log: actionLogs, action: actions })
+            .from(actionLogs)
+            .leftJoin(actions, eq(actionLogs.actionId, actions.id))
+            .where(
+                and(
+                    eq(actionLogs.userId, userId),
+                    gte(actionLogs.loggedAt, range.from),
+                    lt(actionLogs.loggedAt, range.to)
+                )
+            )
+            .all();
+    } else if (date) {
         // e.g. date=2025-10-14  → filter loggedAt LIKE '2025-10-14%'
         rows = await db
             .select({
@@ -58,16 +93,22 @@ logRoutes.get('/', async (c) => {
 });
 
 // ── GET /api/logs/stats ───────────────────────────────────────────────────────
+// Query params:
+//   ?from=ISO&to=ISO  → bounds of the client's local "today"; without them, today is the UTC day (legacy)
 logRoutes.get('/stats', async (c) => {
     const userId = c.get('userId');
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const range = parseRange(c.req.query('from'), c.req.query('to'));
+    if (range === 'invalid') return c.json(INVALID_RANGE, 400);
+
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+    const todayFilter = range
+        ? and(gte(actionLogs.loggedAt, range.from), lt(actionLogs.loggedAt, range.to))
+        : sql`${actionLogs.loggedAt} LIKE ${today + '%'}`;
 
     const todayCount = await db
         .select({ count: sql<number>`count(*)` })
         .from(actionLogs)
-        .where(
-            and(eq(actionLogs.userId, userId), sql`${actionLogs.loggedAt} LIKE ${today + '%'}`)
-        )
+        .where(and(eq(actionLogs.userId, userId), todayFilter))
         .get();
 
     return c.json({
