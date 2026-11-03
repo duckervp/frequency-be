@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import { HTTPException } from 'hono/http-exception';
 import { authRoutes } from './routes/auth.js';
 import { actionRoutes } from './routes/actions.js';
 import { logRoutes } from './routes/logs.js';
@@ -30,5 +31,12 @@ app.route('/actions', actionRoutes);
 app.route('/logs', logRoutes);
 
 app.get('/health', (c) => c.json({ ok: true }));
+
+// Every error leaves as { error }: validation helpers throw HTTPException(400), anything else is a 500
+app.onError((err, c) => {
+    if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+    console.error('[API] Unhandled error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+});
 
 export default app;

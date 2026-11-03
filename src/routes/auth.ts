@@ -5,25 +5,21 @@ import { db } from '../lib/db.js';
 import { users } from '../db/schema.js';
 import { signToken } from '../lib/jwt.js';
 import { genId } from '../lib/id.js';
+import * as v from '../lib/validate.js';
 
 export const authRoutes = new Hono();
 
 // ── POST /api/auth/register ──────────────────────────────────────────────────
 authRoutes.post('/register', async (c) => {
-    const { email, password, name } = await c.req.json<{
-        email: string;
-        password: string;
-        name: string;
-    }>();
-
-    if (!email || !password) {
-        return c.json({ error: 'Email and password are required' }, 400);
-    }
+    const body = await v.jsonBody(c);
+    const email = v.email(body.email);
+    const password = v.password(body.password);
+    const name = (body.name === undefined ? '' : v.text(body.name, 'name', v.LIMITS.name)) || email.split('@')[0];
 
     const existing = await db
         .select()
         .from(users)
-        .where(eq(users.email, email.toLowerCase()))
+        .where(eq(users.email, email))
         .get();
 
     if (existing) {
@@ -33,12 +29,7 @@ authRoutes.post('/register', async (c) => {
     const passwordHash = await bcrypt.hash(password, 12);
     const id = genId();
 
-    await db.insert(users).values({
-        id,
-        email: email.toLowerCase(),
-        passwordHash,
-        name: name ?? email.split('@')[0],
-    });
+    await db.insert(users).values({ id, email, passwordHash, name });
 
     const token = await signToken(id);
     return c.json({ token, user: { id, email, name } }, 201);
@@ -46,31 +37,23 @@ authRoutes.post('/register', async (c) => {
 
 // ── POST /api/auth/login ─────────────────────────────────────────────────────
 authRoutes.post('/login', async (c) => {
-    const { email, password } = await c.req.json<{
-        email: string;
-        password: string;
-    }>();
-
-    if (!email || !password) {
+    const body = await v.jsonBody(c);
+    const { email, password } = body;
+    if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
         return c.json({ error: 'Email and password are required' }, 400);
     }
 
-    console.log(`[AUTH] Checking user: ${email}`);
     const user = await db
         .select()
         .from(users)
-        .where(eq(users.email, email.toLowerCase()))
+        .where(eq(users.email, email.trim().toLowerCase()))
         .get();
-
-    console.log(`[AUTH] DB result for ${email}: ${!!user}`);
 
     if (!user || !user.passwordHash) {
         return c.json({ error: 'Invalid credentials' }, 401);
     }
 
-    console.log(`[AUTH] Validating password...`);
     const valid = await bcrypt.compare(password, user.passwordHash);
-    console.log(`[AUTH] Password valid: ${valid}`);
     if (!valid) {
         return c.json({ error: 'Invalid credentials' }, 401);
     }

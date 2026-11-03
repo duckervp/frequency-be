@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, newUser } from './helpers.js';
+import { db } from '../src/lib/db.js';
+import { actionLogs } from '../src/db/schema.js';
 
 const HCM = 'Asia/Ho_Chi_Minh'; // UTC+7
 const NY = 'America/New_York'; // UTC-5 / UTC-4 (DST)
@@ -91,9 +93,10 @@ describe('GET /logs/streak', () => {
     });
 
     it('skips a stored loggedAt that is not a date instead of failing', async () => {
-        const { token } = await newUser();
+        const { token, userId } = await newUser();
         await log(token, '2026-11-03T01:00:00.000Z');
-        await log(token, 'yesterday'); // POST does not validate the format yet
+        // POST rejects this now; a row written before validation existed can still hold it
+        await db.insert(actionLogs).values({ id: `bad-${Date.now()}`, userId, loggedAt: 'yesterday' });
         const res = await streak(token, `tz=${HCM}`);
         expect(res.status).toBe(200);
         expect(res.body).toEqual({ streak: 1 });

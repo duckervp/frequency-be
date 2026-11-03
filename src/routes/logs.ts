@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
-import { eq, and, gte, lt, sql, desc } from 'drizzle-orm';
+import { eq, and, gte, lt, sql, desc, type SQL } from 'drizzle-orm';
 import { db } from '../lib/db.js';
 import { actionLogs, actions } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { genId } from '../lib/id.js';
+import * as v from '../lib/validate.js';
 
 export const logRoutes = new Hono();
 
@@ -15,14 +16,12 @@ logRoutes.use('*', authMiddleware);
  * Returns null when neither is given, 'invalid' when either is missing, not ISO with Z/offset, or from >= to.
  * Note: a raw '+' in an offset is decoded as a space — clients must URL-encode it (or send Z).
  */
-const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
-
 function parseRange(from?: string, to?: string): { from: string; to: string } | null | 'invalid' {
     if (from === undefined && to === undefined) return null;
-    if (!from || !to || !ISO_INSTANT.test(from) || !ISO_INSTANT.test(to)) return 'invalid';
+    if (!v.isIsoInstant(from) || !v.isIsoInstant(to)) return 'invalid';
     const f = new Date(from);
     const t = new Date(to);
-    if (isNaN(f.getTime()) || isNaN(t.getTime()) || f >= t) return 'invalid';
+    if (f >= t) return 'invalid';
     return { from: f.toISOString(), to: t.toISOString() };
 }
 
@@ -30,6 +29,15 @@ const INVALID_RANGE = { error: 'from and to must both be valid ISO dates, with f
 
 // Newest first; createdAt breaks ties between logs with the same loggedAt
 const NEWEST_FIRST = [desc(actionLogs.loggedAt), desc(actionLogs.createdAt)];
+
+/** Logs joined with their action. The join only matches the log owner's actions, so a foreign actionId never leaks. */
+function logsWithAction(where: SQL | undefined) {
+    return db
+        .select({ log: actionLogs, action: actions })
+        .from(actionLogs)
+        .leftJoin(actions, and(eq(actionLogs.actionId, actions.id), eq(actions.userId, actionLogs.userId)))
+        .where(where);
+}
 
 // ── GET /api/logs ─────────────────────────────────────────────────────────────
 // Query params:
@@ -44,58 +52,19 @@ logRoutes.get('/', async (c) => {
     const range = parseRange(c.req.query('from'), c.req.query('to'));
     if (range === 'invalid') return c.json(INVALID_RANGE, 400);
 
-    let rows;
-
+    let filter: SQL | undefined;
     if (range) {
-        rows = await db
-            .select({ log: actionLogs, action: actions })
-            .from(actionLogs)
-            .leftJoin(actions, eq(actionLogs.actionId, actions.id))
-            .where(
-                and(
-                    eq(actionLogs.userId, userId),
-                    gte(actionLogs.loggedAt, range.from),
-                    lt(actionLogs.loggedAt, range.to)
-                )
-            )
-            .orderBy(...NEWEST_FIRST)
-            .all();
+        filter = and(gte(actionLogs.loggedAt, range.from), lt(actionLogs.loggedAt, range.to));
     } else if (date) {
-        // e.g. date=2025-10-14  → filter loggedAt LIKE '2025-10-14%'
-        rows = await db
-            .select({
-                log: actionLogs,
-                action: actions,
-            })
-            .from(actionLogs)
-            .leftJoin(actions, eq(actionLogs.actionId, actions.id))
-            .where(
-                and(
-                    eq(actionLogs.userId, userId),
-                    sql`${actionLogs.loggedAt} LIKE ${date + '%'}`
-                )
-            )
-            .orderBy(...NEWEST_FIRST)
-            .all();
+        // e.g. date=2025-10-14 -> loggedAt LIKE '2025-10-14%'
+        filter = sql`${actionLogs.loggedAt} LIKE ${date + '%'}`;
     } else if (last24h) {
-        const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-        rows = await db
-            .select({ log: actionLogs, action: actions })
-            .from(actionLogs)
-            .leftJoin(actions, eq(actionLogs.actionId, actions.id))
-            .where(and(eq(actionLogs.userId, userId), gte(actionLogs.loggedAt, since)))
-            .orderBy(...NEWEST_FIRST)
-            .all();
-    } else {
-        rows = await db
-            .select({ log: actionLogs, action: actions })
-            .from(actionLogs)
-            .leftJoin(actions, eq(actionLogs.actionId, actions.id))
-            .where(eq(actionLogs.userId, userId))
-            .orderBy(...NEWEST_FIRST)
-            .all();
+        filter = gte(actionLogs.loggedAt, new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
     }
 
+    const rows = await logsWithAction(and(eq(actionLogs.userId, userId), filter))
+        .orderBy(...NEWEST_FIRST)
+        .all();
     return c.json(rows);
 });
 
@@ -167,7 +136,7 @@ logRoutes.get('/streak', async (c) => {
 
         for (const { loggedAt } of rows) {
             const at = new Date(loggedAt);
-            if (isNaN(at.getTime())) continue; // POST/PUT do not validate the format yet
+            if (isNaN(at.getTime())) continue; // rows written before POST/PUT validated the format
             const day = toDay.format(at);
             if (day > expected) continue; // later today already counted, or a future log
             if (day !== expected) break scan;
@@ -193,12 +162,7 @@ logRoutes.get('/:id', async (c) => {
     const userId = c.get('userId');
     const id = c.req.param('id');
 
-    const row = await db
-        .select({ log: actionLogs, action: actions })
-        .from(actionLogs)
-        .leftJoin(actions, eq(actionLogs.actionId, actions.id))
-        .where(and(eq(actionLogs.id, id), eq(actionLogs.userId, userId)))
-        .get();
+    const row = await logsWithAction(and(eq(actionLogs.id, id), eq(actionLogs.userId, userId))).get();
 
     if (!row) return c.json({ error: 'Not found' }, 404);
     return c.json(row);
@@ -207,30 +171,25 @@ logRoutes.get('/:id', async (c) => {
 // ── POST /api/logs ────────────────────────────────────────────────────────────
 logRoutes.post('/', async (c) => {
     const userId = c.get('userId');
-    const { actionId, loggedAt, note } = await c.req.json<{
-        actionId?: string;
-        loggedAt: string; // ISO-8601
-        note?: string;
-    }>();
+    const body = await v.jsonBody(c);
+    const loggedAt = v.instant(body.loggedAt, 'loggedAt');
+    const note = v.text(body.note, 'note', v.LIMITS.note);
 
-    if (!loggedAt) return c.json({ error: 'loggedAt is required' }, 400);
+    let actionId: string | null = null;
+    if (body.actionId !== undefined && body.actionId !== null) {
+        actionId = v.text(body.actionId, 'actionId', v.LIMITS.token, { required: true });
+        const owned = await db
+            .select({ id: actions.id })
+            .from(actions)
+            .where(and(eq(actions.id, actionId), eq(actions.userId, userId)))
+            .get();
+        if (!owned) v.badRequest('actionId does not match one of your actions');
+    }
 
     const id = genId();
-    await db.insert(actionLogs).values({
-        id,
-        userId,
-        actionId: actionId ?? null,
-        loggedAt,
-        note: note ?? '',
-    });
+    await db.insert(actionLogs).values({ id, userId, actionId, loggedAt, note });
 
-    const row = await db
-        .select({ log: actionLogs, action: actions })
-        .from(actionLogs)
-        .leftJoin(actions, eq(actionLogs.actionId, actions.id))
-        .where(eq(actionLogs.id, id))
-        .get();
-
+    const row = await logsWithAction(eq(actionLogs.id, id)).get();
     return c.json(row, 201);
 });
 
@@ -238,10 +197,11 @@ logRoutes.post('/', async (c) => {
 logRoutes.put('/:id', async (c) => {
     const userId = c.get('userId');
     const id = c.req.param('id');
-    const { loggedAt, note } = await c.req.json<{
-        loggedAt?: string;
-        note?: string;
-    }>();
+    const body = await v.jsonBody(c);
+    const updated = {
+        ...(body.loggedAt !== undefined && { loggedAt: v.instant(body.loggedAt, 'loggedAt') }),
+        ...(body.note !== undefined && { note: v.text(body.note, 'note', v.LIMITS.note) }),
+    };
 
     const existing = await db
         .select()
@@ -251,23 +211,14 @@ logRoutes.put('/:id', async (c) => {
 
     if (!existing) return c.json({ error: 'Not found' }, 404);
 
-    const updated = {
-        ...(loggedAt !== undefined && { loggedAt }),
-        ...(note !== undefined && { note }),
-    };
+    if (Object.keys(updated).length > 0) {
+        await db
+            .update(actionLogs)
+            .set(updated)
+            .where(and(eq(actionLogs.id, id), eq(actionLogs.userId, userId)));
+    }
 
-    await db
-        .update(actionLogs)
-        .set(updated)
-        .where(and(eq(actionLogs.id, id), eq(actionLogs.userId, userId)));
-
-    const row = await db
-        .select({ log: actionLogs, action: actions })
-        .from(actionLogs)
-        .leftJoin(actions, eq(actionLogs.actionId, actions.id))
-        .where(eq(actionLogs.id, id))
-        .get();
-
+    const row = await logsWithAction(eq(actionLogs.id, id)).get();
     return c.json(row);
 });
 

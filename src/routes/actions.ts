@@ -4,11 +4,23 @@ import { db } from '../lib/db.js';
 import { actions } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { genId } from '../lib/id.js';
+import * as v from '../lib/validate.js';
 
 export const actionRoutes = new Hono();
 
 // All action routes require auth
 actionRoutes.use('*', authMiddleware);
+
+/** Validated fields from a POST (name required) or PUT (only the fields sent) body */
+function actionInput(body: Record<string, unknown>, creating: boolean) {
+    const input: Partial<Pick<typeof actions.$inferInsert, 'name' | 'icon' | 'color' | 'remindersEnabled' | 'reminderTime'>> = {};
+    if (creating || body.name !== undefined) input.name = v.text(body.name, 'name', v.LIMITS.name, { required: true });
+    if (body.icon !== undefined) input.icon = v.token(body.icon, 'icon');
+    if (body.color !== undefined) input.color = v.token(body.color, 'color');
+    if (body.remindersEnabled !== undefined) input.remindersEnabled = v.bool(body.remindersEnabled, 'remindersEnabled');
+    if (body.reminderTime !== undefined) input.reminderTime = v.timeOfDay(body.reminderTime, 'reminderTime');
+    return input;
+}
 
 // ── GET /api/actions ─────────────────────────────────────────────────────────
 actionRoutes.get('/', async (c) => {
@@ -24,27 +36,17 @@ actionRoutes.get('/', async (c) => {
 // ── POST /api/actions ────────────────────────────────────────────────────────
 actionRoutes.post('/', async (c) => {
     const userId = c.get('userId');
-    const { name, icon, color, remindersEnabled, reminderTime } = await c.req.json<{
-        name: string;
-        icon?: string;
-        color?: string;
-        remindersEnabled?: boolean;
-        reminderTime?: string;
-    }>();
-
-    if (!name?.trim()) {
-        return c.json({ error: 'Name is required' }, 400);
-    }
+    const input = actionInput(await v.jsonBody(c), true);
 
     const id = genId();
     await db.insert(actions).values({
         id,
         userId,
-        name: name.trim(),
-        icon: icon ?? 'book',
-        color: color ?? 'bg-primary',
-        remindersEnabled: remindersEnabled ?? false,
-        reminderTime: reminderTime ?? '08:00',
+        name: input.name!,
+        icon: input.icon ?? 'book',
+        color: input.color ?? 'bg-primary',
+        remindersEnabled: input.remindersEnabled ?? false,
+        reminderTime: input.reminderTime ?? '08:00',
     });
 
     const row = await db.select().from(actions).where(eq(actions.id, id)).get();
@@ -55,13 +57,7 @@ actionRoutes.post('/', async (c) => {
 actionRoutes.put('/:id', async (c) => {
     const userId = c.get('userId');
     const id = c.req.param('id');
-    const { name, icon, color, remindersEnabled, reminderTime } = await c.req.json<{
-        name?: string;
-        icon?: string;
-        color?: string;
-        remindersEnabled?: boolean;
-        reminderTime?: string;
-    }>();
+    const updated = actionInput(await v.jsonBody(c), false);
 
     const existing = await db
         .select()
@@ -71,18 +67,12 @@ actionRoutes.put('/:id', async (c) => {
 
     if (!existing) return c.json({ error: 'Not found' }, 404);
 
-    const updated = {
-        ...(name !== undefined && { name: name.trim() }),
-        ...(icon !== undefined && { icon }),
-        ...(color !== undefined && { color }),
-        ...(remindersEnabled !== undefined && { remindersEnabled }),
-        ...(reminderTime !== undefined && { reminderTime }),
-    };
-
-    await db
-        .update(actions)
-        .set(updated)
-        .where(and(eq(actions.id, id), eq(actions.userId, userId)));
+    if (Object.keys(updated).length > 0) {
+        await db
+            .update(actions)
+            .set(updated)
+            .where(and(eq(actions.id, id), eq(actions.userId, userId)));
+    }
 
     const row = await db.select().from(actions).where(eq(actions.id, id)).get();
     return c.json(row);
