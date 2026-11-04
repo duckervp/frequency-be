@@ -2,12 +2,19 @@ import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { db } from '../lib/db.js';
-import { users } from '../db/schema.js';
+import { users, type User } from '../db/schema.js';
 import { signToken } from '../lib/jwt.js';
 import { genId } from '../lib/id.js';
 import * as v from '../lib/validate.js';
+import { authMiddleware } from '../middleware/auth.js';
+import type { ApiUser, AuthResponse, MeResponse, SuccessResponse } from '../api-types.js';
 
 export const authRoutes = new Hono();
+
+/** The public part of a user row: never the password hash or Google id */
+function toApiUser(user: Pick<User, 'id' | 'email' | 'name' | 'avatarUrl'>): ApiUser {
+    return { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl };
+}
 
 // ── POST /api/auth/register ──────────────────────────────────────────────────
 authRoutes.post('/register', async (c) => {
@@ -32,7 +39,7 @@ authRoutes.post('/register', async (c) => {
     await db.insert(users).values({ id, email, passwordHash, name });
 
     const token = await signToken(id);
-    return c.json({ token, user: { id, email, name } } satisfies AuthResponse, 201);
+    return c.json({ token, user: toApiUser({ id, email, name, avatarUrl: null }) } satisfies AuthResponse, 201);
 });
 
 // ── POST /api/auth/login ─────────────────────────────────────────────────────
@@ -61,7 +68,7 @@ authRoutes.post('/login', async (c) => {
     const token = await signToken(user.id);
     return c.json({
         token,
-        user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl },
+        user: toApiUser(user),
     } satisfies AuthResponse);
 });
 
@@ -160,27 +167,40 @@ authRoutes.get('/google/callback', async (c) => {
 });
 
 // ── GET /api/auth/me ─────────────────────────────────────────────────────────
-import { authMiddleware } from '../middleware/auth.js';
-import type { AuthResponse, MeResponse } from '../api-types.js';
 
 authRoutes.get('/me', authMiddleware, async (c) => {
-    const userId = c.get('userId');
-    const user = await db
-        .select()
-        .from(users)
-        .where(eq(users.id, userId))
-        .get();
+    const user = await db.select().from(users).where(eq(users.id, c.get('userId'))).get();
+    if (!user) return c.json({ error: 'User not found' }, 404);
+    return c.json({ user: toApiUser(user), hasPassword: user.passwordHash !== null } satisfies MeResponse);
+});
 
-    if (!user) {
-        return c.json({ error: 'User not found' }, 404);
+// ── PUT /api/auth/me ─────────────────────────────────────────────────────────
+authRoutes.put('/me', authMiddleware, async (c) => {
+    const body = await v.jsonBody(c);
+    const name = v.text(body.name, 'name', v.LIMITS.name, { required: true });
+    const userId = c.get('userId');
+    await db.update(users).set({ name }).where(eq(users.id, userId));
+    const user = await db.select().from(users).where(eq(users.id, userId)).get();
+    if (!user) return c.json({ error: 'User not found' }, 404);
+    return c.json({ user: toApiUser(user), hasPassword: user.passwordHash !== null } satisfies MeResponse);
+});
+
+// ── PUT /api/auth/password ───────────────────────────────────────────────────
+// An account created with Google has no password yet and may set one without a current password.
+authRoutes.put('/password', authMiddleware, async (c) => {
+    const body = await v.jsonBody(c);
+    const newPassword = v.password(body.newPassword);
+    const userId = c.get('userId');
+    const user = await db.select().from(users).where(eq(users.id, userId)).get();
+    if (!user) return c.json({ error: 'User not found' }, 404);
+
+    if (user.passwordHash !== null) {
+        const current = typeof body.currentPassword === 'string' ? body.currentPassword : '';
+        if (!current || !(await bcrypt.compare(current, user.passwordHash))) {
+            return c.json({ error: 'Current password is incorrect' }, 400);
+        }
     }
 
-    return c.json({
-        user: {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            avatarUrl: user.avatarUrl,
-        },
-    } satisfies MeResponse);
+    await db.update(users).set({ passwordHash: await bcrypt.hash(newPassword, 12) }).where(eq(users.id, userId));
+    return c.json({ success: true } satisfies SuccessResponse);
 });

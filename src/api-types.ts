@@ -46,9 +46,11 @@ export interface AuthResponse {
 
 export interface MeResponse {
     user: ApiUser;
+    /** False for an account that only signs in with Google: it can set a password without a current one */
+    hasPassword: boolean;
 }
 
-export interface DeleteResponse {
+export interface SuccessResponse {
     success: boolean;
 }
 
@@ -70,6 +72,16 @@ export interface RegisterBody {
 export interface LoginBody {
     email: string;
     password: string;
+}
+
+export interface UpdateProfileBody {
+    name: string;
+}
+
+export interface ChangePasswordBody {
+    /** Required when the account already has a password */
+    currentPassword?: string;
+    newPassword: string;
 }
 
 export interface ActionBody {

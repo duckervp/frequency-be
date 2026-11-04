@@ -5,7 +5,7 @@ import { actions } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { genId } from '../lib/id.js';
 import * as v from '../lib/validate.js';
-import type { DeleteResponse } from '../api-types.js';
+import type { SuccessResponse } from '../api-types.js';
 
 export const actionRoutes = new Hono();
 
@@ -108,5 +108,5 @@ actionRoutes.delete('/:id', async (c) => {
         .delete(actions)
         .where(and(eq(actions.id, id), eq(actions.userId, userId)));
 
-    return c.json({ success: true } satisfies DeleteResponse);
+    return c.json({ success: true } satisfies SuccessResponse);
 });
