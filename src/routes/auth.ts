@@ -32,7 +32,7 @@ authRoutes.post('/register', async (c) => {
     await db.insert(users).values({ id, email, passwordHash, name });
 
     const token = await signToken(id);
-    return c.json({ token, user: { id, email, name } }, 201);
+    return c.json({ token, user: { id, email, name } } satisfies AuthResponse, 201);
 });
 
 // ── POST /api/auth/login ─────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ authRoutes.post('/login', async (c) => {
     return c.json({
         token,
         user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl },
-    });
+    } satisfies AuthResponse);
 });
 
 // ── GET /api/auth/google ─────────────────────────────────────────────────────
@@ -161,6 +161,7 @@ authRoutes.get('/google/callback', async (c) => {
 
 // ── GET /api/auth/me ─────────────────────────────────────────────────────────
 import { authMiddleware } from '../middleware/auth.js';
+import type { AuthResponse, MeResponse } from '../api-types.js';
 
 authRoutes.get('/me', authMiddleware, async (c) => {
     const userId = c.get('userId');
@@ -181,5 +182,5 @@ authRoutes.get('/me', authMiddleware, async (c) => {
             name: user.name,
             avatarUrl: user.avatarUrl,
         },
-    });
+    } satisfies MeResponse);
 });

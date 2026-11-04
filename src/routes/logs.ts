@@ -5,6 +5,7 @@ import { actionLogs, actions } from '../db/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { genId } from '../lib/id.js';
 import * as v from '../lib/validate.js';
+import type { DeleteResponse, StatsResponse, StreakResponse } from '../api-types.js';
 
 export const logRoutes = new Hono();
 
@@ -90,7 +91,7 @@ logRoutes.get('/stats', async (c) => {
     return c.json({
         totalToday: todayCount?.count ?? 0,
         dateInfo: `Today, ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
-    });
+    } satisfies StatsResponse);
 });
 
 // ── GET /api/logs/streak ──────────────────────────────────────────────────────
@@ -146,7 +147,7 @@ logRoutes.get('/streak', async (c) => {
         if (rows.length < STREAK_BATCH) break;
         before = rows[rows.length - 1].loggedAt;
     }
-    return c.json({ streak });
+    return c.json({ streak } satisfies StreakResponse);
 });
 
 const STREAK_BATCH = 500;
@@ -239,5 +240,5 @@ logRoutes.delete('/:id', async (c) => {
         .delete(actionLogs)
         .where(and(eq(actionLogs.id, id), eq(actionLogs.userId, userId)));
 
-    return c.json({ success: true });
+    return c.json({ success: true } satisfies DeleteResponse);
 });

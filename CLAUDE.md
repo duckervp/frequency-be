@@ -40,4 +40,4 @@ Hono REST API for Frequency, Drizzle ORM on Turso (libsql). Deployed to Vercel. 
 - `npx drizzle-kit export` prints the schema as SQL without touching the DB or repo — use it to sanity-check `drizzle.config.ts`.
 - `.env` points at the **same Turso database as production** (same host as the Vercel env). Local testing writes real data — ask before running `db:push`/`db:migrate`, bulk writes, or deleting anything.
 - Google OAuth only works on the deployed BE (redirect URI). Test locally with email + password.
-- After changing a route's request/response shape, update `../frequency/src/lib/api.ts` (web) in the same task; mobile's `api.ts` is updated when the feature is synced.
+- Request/response shapes are defined in `src/api-types.ts` (no imports: clients copy it). After changing them run `npm run sync:api-types` in `../frequency` in the same task; mobile's `api.ts` is updated when the feature is synced. `src/api-types.check.ts` ties the contract to the schema.
