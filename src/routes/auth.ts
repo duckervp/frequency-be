@@ -11,6 +11,8 @@ import type { ApiUser, AuthResponse, MeResponse, SuccessResponse } from '../api-
 
 export const authRoutes = new Hono();
 
+const FIRST_PASSWORD_MAX_TOKEN_AGE_S = 15 * 60;
+
 /** The public part of a user row: never the password hash or Google id */
 function toApiUser(user: Pick<User, 'id' | 'email' | 'name' | 'avatarUrl'>): ApiUser {
     return { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl };
@@ -194,7 +196,13 @@ authRoutes.put('/password', authMiddleware, async (c) => {
     const user = await db.select().from(users).where(eq(users.id, userId)).get();
     if (!user) return c.json({ error: 'User not found' }, 404);
 
-    if (user.passwordHash !== null) {
+    if (user.passwordHash === null) {
+        // Without a current password to check, only a fresh Google sign-in proves it is the owner:
+        // otherwise a stolen token could add a password login that outlives the token
+        if (Date.now() / 1000 - c.get('tokenIssuedAt') > FIRST_PASSWORD_MAX_TOKEN_AGE_S) {
+            return c.json({ error: 'For security, sign in with Google again, then set your password within 15 minutes' }, 403);
+        }
+    } else {
         const current = typeof body.currentPassword === 'string' ? body.currentPassword : '';
         if (!current || !(await bcrypt.compare(current, user.passwordHash))) {
             return c.json({ error: 'Current password is incorrect' }, 400);

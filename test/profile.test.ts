@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { api, newUser } from './helpers.js';
 import { db } from '../src/lib/db.js';
@@ -42,6 +42,22 @@ describe('profile', () => {
     it('rejects a new password that is too short', async () => {
         const { token, password } = await newUser();
         expect((await api('PUT', '/auth/password', { token, body: { currentPassword: password, newPassword: '123' } })).status).toBe(400);
+    });
+
+    it('regression: a first password needs a recent sign-in, so a stolen token cannot add a lasting login', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            vi.setSystemTime(new Date('2026-11-04T08:00:00.000Z'));
+            const { token, userId } = await newUser();
+            await db.update(users).set({ passwordHash: null }).where(eq(users.id, userId));
+
+            vi.setSystemTime(new Date('2026-11-04T08:20:00.000Z')); // token issued 20 minutes ago
+            const res = await api('PUT', '/auth/password', { token, body: { newPassword: 'password456' } });
+            expect(res.status).toBe(403);
+            expect(res.body.error).toMatch(/sign in .*again/i);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('lets a Google-only account (no password yet) set one without a current password', async () => {
