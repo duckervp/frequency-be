@@ -99,7 +99,8 @@ logRoutes.get('/stats', async (c) => {
 //   ?tz=IANA zone (required, e.g. Asia/Ho_Chi_Minh) -> days are the user's local calendar days
 //   ?actionId=    -> only logs of that action
 //   ?today=YYYY-MM-DD -> the client's local today (so it matches the calendar it shows); defaults to today in tz
-// Returns { streak }: consecutive local days with a log, counting back from today (0 if nothing today).
+// Returns { streak }: consecutive local days with a log, counting back from today. A run stays alive
+// until today ends: with nothing logged today yet it counts back from yesterday.
 // Computed here so clients never download the log history just to count days.
 logRoutes.get('/streak', async (c) => {
     const userId = c.get('userId');
@@ -118,7 +119,8 @@ logRoutes.get('/streak', async (c) => {
         return c.json({ error: 'tz must be a valid IANA timezone, e.g. Asia/Ho_Chi_Minh' }, 400);
     }
 
-    let expected = today ?? toDay.format(new Date());
+    const start = today ?? toDay.format(new Date());
+    let expected = start;
     let streak = 0;
     let before: string | undefined;
     // Newest first in batches (index on user_id, logged_at), so a short streak reads only a few rows
@@ -140,6 +142,9 @@ logRoutes.get('/streak', async (c) => {
             if (isNaN(at.getTime())) continue; // rows written before POST/PUT validated the format
             const day = toDay.format(at);
             if (day > expected) continue; // later today already counted, or a future log
+            if (streak === 0 && expected === start && day === previousDay(start)) {
+                expected = day; // nothing logged today yet: yesterday still counts
+            }
             if (day !== expected) break scan;
             streak++;
             expected = previousDay(expected);

@@ -32,10 +32,21 @@ describe('GET /logs/streak', () => {
         expect((await streak(token, 'tz=Mars/Base')).status).toBe(400);
     });
 
-    it('is 0 with no logs, and 0 when nothing is logged today', async () => {
+    it('is 0 with no logs', async () => {
         const { token } = await newUser();
         expect((await streak(token, `tz=${HCM}`)).body).toEqual({ streak: 0 });
+    });
+
+    it('keeps a run alive until the end of today: nothing logged today yet counts from yesterday', async () => {
+        const { token } = await newUser();
+        await log(token, '2026-11-01T01:00:00.000Z'); // Nov 1 local
         await log(token, '2026-11-02T01:00:00.000Z'); // Nov 2 local, yesterday
+        expect((await streak(token, `tz=${HCM}`)).body).toEqual({ streak: 2 });
+    });
+
+    it('is 0 once a whole day was missed', async () => {
+        const { token } = await newUser();
+        await log(token, '2026-11-01T01:00:00.000Z'); // Nov 1 local; nothing on Nov 2 or today (Nov 3)
         expect((await streak(token, `tz=${HCM}`)).body).toEqual({ streak: 0 });
     });
 
