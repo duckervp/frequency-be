@@ -36,7 +36,7 @@ Hono REST API for Frequency, Drizzle ORM on Turso (libsql). Deployed to Vercel. 
 ## Gotchas
 
 - `.env` is local dev; `.env.local` was pulled by the Vercel CLI and may hold **production** values. Both are secret — never read values out loud or commit them.
-- No migration history exists: the DB was created with `db:push`. The first `db:generate` will emit a `0000` migration with `CREATE TABLE` for tables that already exist — never `db:migrate` that against the real DB. Prefer `db:push` (after reviewing the diff) or baseline the migrations first.
+- Schema changes go through migrations: edit `src/db/schema.ts`, run `npm run db:generate`, commit the new file in `src/db/migrations/`, then `npm run db:migrate` against Turso (back up first, see the runbooks in `../frequency/docs/runbooks/`). `test/migrations.test.ts` fails if the schema and the migrations drift apart. Production was created with `db:push` and baselined at `0000_baseline` with `npm run db:baseline` (one-off; it refuses to run twice). Do not use `db:push` on the real DB any more.
 - `npx drizzle-kit export` prints the schema as SQL without touching the DB or repo — use it to sanity-check `drizzle.config.ts`.
 - `.env` points at the **same Turso database as production** (same host as the Vercel env). Local testing writes real data — ask before running `db:push`/`db:migrate`, bulk writes, or deleting anything.
 - Google OAuth only works on the deployed BE (redirect URI). Test locally with email + password.
